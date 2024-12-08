@@ -31,7 +31,12 @@ namespace dfu
 
 void init()
 {
-  if (libusb_init_context(nullptr, nullptr, 0) < 0) {
+#if LIBUSB_API_VERSION >= 0x0100010A
+#  define _init_libusb() libusb_init_context(nullptr, nullptr, 0)
+#else
+#  define _init_libusb() libusb_init(nullptr)
+#endif
+  if (_init_libusb() < 0) {
     throw std::runtime_error("libusb init failed");
   }
 }
