@@ -1,0 +1,6 @@
+.cache
+*.o.json
+*.o
+dfu
+compile_commands.json
+*.bin
