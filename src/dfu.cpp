@@ -1,7 +1,7 @@
 #include "dfu.h"
 
-#include <unistd.h>
 #include <string.h>
+#include <unistd.h>
 
 #include <regex>
 
@@ -29,20 +29,6 @@
 namespace dfu
 {
 
-void init()
-{
-#if LIBUSB_API_VERSION >= 0x0100010A
-#  define _init_libusb() libusb_init_context(nullptr, nullptr, 0)
-#else
-#  define _init_libusb() libusb_init(nullptr)
-#endif
-  if (_init_libusb() < 0) {
-    throw std::runtime_error("libusb init failed");
-  }
-}
-
-void finish() { libusb_exit(nullptr); }
-
 void _free_device_list(libusb_device** devs)
 {
   if (devs) libusb_free_device_list(devs, 1);
@@ -60,12 +46,69 @@ class device_list
   libusb_device** get() const { return devs.get(); }
 };
 
-device_list get_device_list()
+device_list get_device_list(libusb_context* ctx)
 {
   libusb_device** devs = nullptr;
-  ssize_t cnt = libusb_get_device_list(nullptr, &devs);
+  ssize_t cnt = libusb_get_device_list(ctx, &devs);
   if (cnt < 0) return {};
   return {devs};
+}
+
+context::context(libusb_context* ctx) : ctx(ctx, libusb_exit) {}
+
+std::optional<context> init()
+{
+#if LIBUSB_API_VERSION >= 0x0100010A
+#define _init_libusb(ctx) libusb_init_context(ctx, nullptr, 0)
+#else
+#define _init_libusb(ctx) libusb_init(ctx)
+#endif
+  libusb_context* ctx = nullptr;
+  if (_init_libusb(&ctx) < 0) {
+    return {};
+  }
+  return {{ctx}};
+}
+
+dfu_devices context::find_devices(std::optional<uint16_t> vendor,
+                                  std::optional<uint16_t> product)
+{
+  dfu_devices dfu_devs;
+  auto devs = get_device_list(ctx.get());
+  if (devs.empty()) return dfu_devs;
+
+  unsigned int dev_idx = 0;
+  libusb_device* dev_ptr = nullptr;
+
+  while ((dev_ptr = devs.get()[dev_idx++]) != nullptr) {
+    auto dev = device{dev_ptr};
+    auto desc = dev.descriptor();
+
+    if (vendor.has_value() && vendor.value() != desc.idVendor) continue;
+    if (product.has_value() && product.value() != desc.idProduct) continue;
+
+    dfu_device dfu{dev, desc.idVendor, desc.idProduct};
+    for (auto cfg : dev.configurations()) {
+      for (int i = 0; i < cfg->bNumInterfaces; i++) {
+        const auto& intf = cfg->interface[i];
+        for (int alt = 0; alt < intf.num_altsetting; alt++) {
+          const auto& intf_desc = intf.altsetting[alt];
+          if (intf_desc.bInterfaceClass == 0xFE &&
+              intf_desc.bInterfaceSubClass == 1) {
+            dfu.interfaces.emplace_back(dfu_interface{
+                dev, cfg->bConfigurationValue, intf_desc.bInterfaceNumber,
+                intf_desc.bAlternateSetting, intf_desc.iInterface});
+          }
+        }
+      }
+    }
+
+    if (!dfu.interfaces.empty()) {
+      dfu_devs.emplace_back(std::move(dfu));
+    }
+  }
+
+  return dfu_devs;
 }
 
 device::device(libusb_device* dev) :
@@ -104,7 +147,6 @@ configuration_ptr device::configuration(uint8_t cfg)
 
 void _close_handle(libusb_device_handle* h)
 {
-  // printf("_close_handle(%p)\n", h);
   libusb_close(h);
 }
 
@@ -114,7 +156,6 @@ device_handle device::open()
   if (libusb_open(dev.get(), &dev_handle) != 0) {
     return {};
   }
-  // printf("_open_handle() = %p\n", dev_handle);
   return {dev_handle, _close_handle};
 }
 
@@ -139,7 +180,7 @@ dfu_descriptor dfu_device::get_dfu_descriptor()
 
     if (dfu_intf.alt_setting >= intf.num_altsetting) continue;
     const auto& intf_desc = intf.altsetting[dfu_intf.alt_setting];
-    
+
     if (intf_desc.extra_length != DFU_DESCRIPTOR_LEN ||
         intf_desc.extra[1] != DFU_DESCRIPTOR_ID)
       continue;
@@ -214,21 +255,20 @@ std::shared_ptr<dfu_connection> dfu_interface::connect()
   if (!h || (libusb_claim_interface(h.get(), interface) < 0)) {
     return {};
   }
-  // printf("claim interface(h=%p)\n", h.get());
   return std::make_shared<dfu_connection>(dev, std::move(h), interface);
 }
 
 dfu_connection::~dfu_connection()
 {
-  // printf("release interface(h=%p)\n", h.get());
   libusb_release_interface(h.get(), interface);
 }
 
-int dfu_connection::dfu_dnload(int transaction, unsigned char* data, size_t data_len)
+int dfu_connection::dfu_dnload(int transaction, unsigned char* data,
+                               size_t data_len)
 {
-  int err =
-      libusb_control_transfer(h.get(), USB_REQUEST_TYPE_SEND, DFU_CMD_DOWNLOAD,
-                              transaction, interface, data, data_len, TIMEOUT_MS);
+  int err = libusb_control_transfer(h.get(), USB_REQUEST_TYPE_SEND,
+                                    DFU_CMD_DOWNLOAD, transaction, interface,
+                                    data, data_len, TIMEOUT_MS);
   if (err < 0) {
     fprintf(stderr, "libusb_control_transfer() returned %s\n",
             libusb_error_name(err));
@@ -315,51 +355,6 @@ int dfu_connection::download(uint32_t addr, const uint8_t* data, size_t len)
   if (status < 0) return status;
 
   return dfu_dnload(2, (unsigned char*)data, len);
-}
-
-dfu_devices find_devices(std::optional<uint16_t> vendor, std::optional<uint16_t> product)
-{
-  dfu_devices dfu_devs;
-
-  auto devs = get_device_list();
-  if (devs.empty()) return dfu_devs;
-
-  unsigned int dev_idx = 0;
-  libusb_device* dev_ptr = nullptr;
-
-  while ((dev_ptr = devs.get()[dev_idx++]) != nullptr) {
-    auto dev = device{dev_ptr};
-    auto desc = dev.descriptor();
-
-    if (vendor.has_value() && vendor.value() != desc.idVendor)
-      continue;
-    
-    if (product.has_value() && product.value() != desc.idProduct)
-      continue;
-
-    dfu_device dfu{dev, desc.idVendor, desc.idProduct};
-
-    for (auto cfg : dev.configurations()) {
-      for (int i = 0; i < cfg->bNumInterfaces; i++) {
-        const auto& intf = cfg->interface[i];
-        for (int alt = 0; alt < intf.num_altsetting; alt++) {
-          const auto& intf_desc = intf.altsetting[alt];
-          if (intf_desc.bInterfaceClass == 0xFE &&
-              intf_desc.bInterfaceSubClass == 1) {
-            dfu.interfaces.emplace_back(dfu_interface{
-                dev, cfg->bConfigurationValue, intf_desc.bInterfaceNumber,
-                intf_desc.bAlternateSetting, intf_desc.iInterface});
-          }
-        }
-      }
-    }
-
-    if (!dfu.interfaces.empty()) {
-      dfu_devs.emplace_back(std::move(dfu));
-    }
-  }
-
-  return dfu_devs;
 }
 
 }  // namespace dfu

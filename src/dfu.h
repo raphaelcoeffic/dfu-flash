@@ -23,12 +23,27 @@
 namespace dfu
 {
 
+struct dfu_device;
+
+using context_ptr = std::shared_ptr<libusb_context>;
 using device_ptr = std::shared_ptr<libusb_device>;
 using configuration_ptr = std::shared_ptr<libusb_config_descriptor>;
 using device_handle = std::shared_ptr<libusb_device_handle>;
+using dfu_devices = std::vector<dfu_device>;
 
-void init();
-void finish();
+class context
+{
+  context_ptr ctx;
+
+ public:
+  context(context_ptr&& ctx) : ctx(std::move(ctx)) {}
+  context(libusb_context* ctx);
+
+  dfu_devices find_devices(std::optional<uint16_t> vendor,
+                           std::optional<uint16_t> product);
+};
+
+std::optional<context> init();
 
 class device
 {
@@ -43,7 +58,10 @@ class device
   configuration_ptr configuration(uint8_t cfg);
 
   uint8_t bus_number() const { return libusb_get_bus_number(dev.get()); }
-  uint8_t device_address() const { return libusb_get_device_address(dev.get()); }
+  uint8_t device_address() const
+  {
+    return libusb_get_device_address(dev.get());
+  }
 
   device_handle open();
 };
@@ -126,9 +144,5 @@ class dfu_connection
   int set_address(uint32_t addr);
   int download(uint32_t addr, const uint8_t* data, size_t len);
 };
-
-using dfu_devices = std::vector<dfu_device>;
-
-dfu_devices find_devices(std::optional<uint16_t> vendor, std::optional<uint16_t> product);
 
 }  // namespace dfu

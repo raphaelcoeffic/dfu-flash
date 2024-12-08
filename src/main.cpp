@@ -15,8 +15,11 @@
 void list_devices(std::optional<uint16_t> vendor = std::nullopt,
                   std::optional<uint16_t> product = std::nullopt)
 {
-  dfu::init();
-  auto devs = dfu::find_devices(vendor, product);
+  auto opt_ctx = dfu::init();
+  if (!opt_ctx.has_value()) return;
+
+  auto ctx = opt_ctx.value();
+  auto devs = ctx.find_devices(vendor, product);
 
   for (auto dfu : devs) {
     printf("Bus %d Device %03d: ID %04x:%04x\n", dfu.bus_number(),
@@ -40,7 +43,6 @@ void list_devices(std::optional<uint16_t> vendor = std::nullopt,
       }
     }
   }
-  dfu::finish();
 }
 
 using intf_segment = std::pair<dfu::dfu_interface, dfu::dfu_memory_layout>;
@@ -219,8 +221,14 @@ int main(int argc, char** argv)
     return 1;
   }
 
-  dfu::init();
-  auto devs = dfu::find_devices(std::nullopt, std::nullopt);
+  auto opt_ctx = dfu::init();
+  if (!opt_ctx) {
+    fprintf(stderr, "Cannot initialise libusb\n");
+    return 1;
+  }
+
+  auto ctx = opt_ctx.value();
+  auto devs = ctx.find_devices(std::nullopt, std::nullopt);
   auto n_devices = devs.size();
 
   int ret = 1;
@@ -245,6 +253,5 @@ int main(int argc, char** argv)
     }
   }
 
-  dfu::finish();
   return ret;
 }
