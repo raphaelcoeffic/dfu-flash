@@ -167,9 +167,97 @@ int download(dfu::dfu_device& dfu, const uint8_t* data, size_t data_len,
   return ret;
 }
 
-int upload(dfu::dfu_device& connection, const uint8_t* data, size_t data_len,
-           uint32_t start_address)
+int upload(dfu::dfu_device& dfu, const char* filename)
 {
+  int ret = 0;
+  auto dfu_desc = dfu.get_dfu_descriptor();
+  uint16_t bcdDFUVersion = dfu_desc.bcdDFUVersion;
+  if (bcdDFUVersion == DFUSE_VERSION_NUMBER) {
+    printf("DFuSe device detected (xfer_size=%d)\n", dfu_desc.wTransferSize);
+  }
+
+  if (dfu.interfaces.size() == 0) {
+    fprintf(stderr, "No DFU interface found\n");
+    return 1;
+  }
+  
+  auto intf = dfu.interfaces[0];
+  printf("DFuSe interface [%d:%d]\n", intf.interface, intf.alt_setting);
+
+  auto connection = intf.connect();
+  if (!connection) {
+    fprintf(stderr, "Could not claim DFU device\n");
+  } else {
+    dfu::dfu_status st;
+    ret = connection->get_status(st);
+    if (ret == 0 && st.state != DFU_STATE_DFU_IDLE) {
+      ret = connection->abort();
+      if (ret == 0) {
+        ret = connection->get_status(st);
+      }
+    }
+
+    if (ret == 0 && st.status != 0) {
+      fprintf(stderr, "Error while querying device state: %d\n", st.status);
+      return -1;
+    }
+  }
+
+  auto mem_layout = intf.memory_layout();
+  if (mem_layout.empty()) {
+    fprintf(stderr, "No memory layout found\n");
+    return 1;
+  }
+
+  std::ofstream file(filename, std::ios::binary | std::ios::out | std::ios::trunc);
+  if (!file) {
+    fprintf(stderr, "Could not open '%s'\n", filename);
+    return 1;
+  }
+
+  auto start_addr = mem_layout.front().start;
+  int status = connection->set_address(start_addr);
+  if (status < 0) {
+    fprintf(stderr, "Could not set start address\n");
+    return status;
+  }
+  
+  dfu::dfu_status st;
+  ret = connection->get_status(st);
+  if (ret < 0) return ret;
+
+  if (st.state != DFU_STATE_DFU_IDLE) {
+    ret = connection->abort();
+    if (ret < 0) return ret;
+  }
+
+  // assume contiguous blocks / addresses
+  auto end_addr = mem_layout.back().end;
+  size_t total_len = end_addr - start_addr;
+
+  uint16_t block_nr = 0;
+  size_t xfer_size = dfu_desc.wTransferSize;
+
+  uint8_t buffer[xfer_size];
+  size_t bytes_read = 0;
+  while (bytes_read < total_len) {
+    auto chunk_size = std::min(xfer_size, total_len - bytes_read);
+    int err = connection->upload(block_nr, buffer, chunk_size);
+    if (err < 0) return err;
+
+    file.write((const char*)buffer, chunk_size);
+    bytes_read += chunk_size;
+    block_nr += 1;
+
+    double percentage = (double)bytes_read / (double)total_len;
+    int lpad = (int) (percentage * PBWIDTH);
+    int rpad = PBWIDTH - lpad;
+
+    printf("\rReading [%.*s%*s]", lpad, PBSTR, rpad, "");
+    fflush(stdout);
+  }
+  printf("\n");
+
   return 0;
 }
 
@@ -236,7 +324,7 @@ int main(int argc, char** argv)
     fprintf(stderr, "No DFU device found.\n");
   } else if (n_devices > 1) {
     fprintf(stderr, "More than one DFU devices found.\n");
-  } else {
+  } else if (write) {
     std::vector<char> fw;
     if (read_file(filename, fw) != 0) {
       ret = 1;
@@ -245,12 +333,15 @@ int main(int argc, char** argv)
       auto data = (const uint8_t*)fw.data();
       auto len = fw.size();
       uint32_t addr = 0x08000000;
-      ret =
-          write ? download(dev, data, len, addr) : upload(dev, data, len, addr);
-      if (ret) {
-        fprintf(stderr, "Error: %d\n", ret);
-      }
+      ret = download(dev, data, len, addr);
     }
+  } else {
+    auto dev = devs[0];
+    ret = upload(dev, filename); 
+  }
+
+  if (ret) {
+    fprintf(stderr, "Error: %d\n", ret);
   }
 
   return ret;

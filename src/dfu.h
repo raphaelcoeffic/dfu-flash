@@ -127,6 +127,7 @@ class dfu_connection
   uint8_t interface;
 
   int dfu_dnload(int transaction, unsigned char* data, size_t data_len);
+  int dfu_upload(int transaction, unsigned char* data, size_t data_len);
 
  public:
   dfu_connection(const device& dev, device_handle&& h, uint8_t interface) :
@@ -137,12 +138,14 @@ class dfu_connection
 
   int get_status(dfu_status& st);
   int clear_status();
+  int abort();
 
   int dfuse_page_erase(uint32_t addr);
   int dfuse_leave(uint32_t addr);
 
   int set_address(uint32_t addr);
   int download(uint32_t addr, const uint8_t* data, size_t len);
+  int upload(uint16_t block_nr, uint8_t* data, size_t len);
 };
 
 }  // namespace dfu

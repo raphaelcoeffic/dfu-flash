@@ -12,15 +12,19 @@
 
 #define MAX_DESC_STR_LEN 253
 
-// #define USB_REQUEST_TYPE_SEND 0x21
 #define USB_REQUEST_TYPE_SEND \
   LIBUSB_ENDPOINT_OUT | LIBUSB_REQUEST_TYPE_CLASS | LIBUSB_RECIPIENT_INTERFACE
 
-#define USB_REQUEST_TYPE_RECV 0xA1
+#define USB_REQUEST_TYPE_RECV \
+  LIBUSB_ENDPOINT_IN | LIBUSB_REQUEST_TYPE_CLASS | LIBUSB_RECIPIENT_INTERFACE
 
 #define DFU_CMD_DOWNLOAD 1
+#define DFU_CMD_UPLOAD 2
 #define DFU_CMD_GETSTATUS 3
 #define DFU_CMD_CLRSTATUS 4
+#define DFU_CMD_GETSTATE 5
+#define DFU_CMD_ABORT 6
+
 #define DFU_STATE_LEN 6
 
 #define DFUSE_CMD_ADDR 0x21
@@ -145,10 +149,7 @@ configuration_ptr device::configuration(uint8_t cfg)
   return {cfg_desc, libusb_free_config_descriptor};
 }
 
-void _close_handle(libusb_device_handle* h)
-{
-  libusb_close(h);
-}
+void _close_handle(libusb_device_handle* h) { libusb_close(h); }
 
 device_handle device::open()
 {
@@ -283,6 +284,20 @@ int dfu_connection::dfu_dnload(int transaction, unsigned char* data,
   return st.status;
 }
 
+int dfu_connection::dfu_upload(int transaction, unsigned char* data,
+                               size_t data_len)
+{
+  int err = libusb_control_transfer(h.get(), USB_REQUEST_TYPE_RECV,
+                                    DFU_CMD_UPLOAD, transaction, interface,
+                                    data, data_len, TIMEOUT_MS);
+  if (err < 0) {
+    fprintf(stderr, "libusb_control_transfer() returned %s\n",
+            libusb_error_name(err));
+  }
+
+  return err;
+}
+
 int dfu_connection::get_status(dfu_status& st)
 {
   uint8_t data[DFU_STATE_LEN];
@@ -305,6 +320,12 @@ int dfu_connection::clear_status()
   return libusb_control_transfer(h.get(), USB_REQUEST_TYPE_SEND,
                                  DFU_CMD_CLRSTATUS, 0, interface, nullptr, 0,
                                  TIMEOUT_MS);
+}
+
+int dfu_connection::abort()
+{
+  return libusb_control_transfer(h.get(), USB_REQUEST_TYPE_SEND, DFU_CMD_ABORT,
+                                 0, interface, nullptr, 0, TIMEOUT_MS);
 }
 
 int dfu_connection::dfuse_page_erase(uint32_t addr)
@@ -355,6 +376,11 @@ int dfu_connection::download(uint32_t addr, const uint8_t* data, size_t len)
   if (status < 0) return status;
 
   return dfu_dnload(2, (unsigned char*)data, len);
+}
+
+int dfu_connection::upload(uint16_t block_nr, uint8_t* data, size_t len)
+{
+  return dfu_upload(2 + block_nr, data, len);
 }
 
 }  // namespace dfu
