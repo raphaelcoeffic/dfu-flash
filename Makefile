@@ -12,8 +12,8 @@ LDFLAGS += -g -fsanitize=address
 
 all: dfu
 
-dfu: $(objects) compile_commands.json
-	clang++ -o dfu $(LDFLAGS) $(objects)
+dfu: $(objects)
+	$(CXX) -o dfu $(objects) $(LDFLAGS)
 
 %.o.json: %.cpp
 	clang++ -MJ $@ $(CXXFLAGS) -c $<

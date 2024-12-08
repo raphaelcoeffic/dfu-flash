@@ -1,6 +1,8 @@
 #include "dfu.h"
 
 #include <unistd.h>
+#include <string.h>
+
 #include <regex>
 
 #define TIMEOUT_MS 5000
