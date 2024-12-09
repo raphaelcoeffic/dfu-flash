@@ -1,14 +1,18 @@
 objects = src/main.o src/dfu.o
 
+CXXFLAGS += -std=c++17 -O1 -g -fno-omit-frame-pointer
+LDFLAGS += -g
+
 LIBUSB_CFLAGS = $(shell pkg-config --cflags libusb-1.0)
 LIBUSB_LDFLAGS = $(shell pkg-config --libs libusb-1.0)
 
 CXXFLAGS += $(LIBUSB_CFLAGS)
 LDFLAGS += $(LIBUSB_LDFLAGS)
 
-CXXFLAGS += -std=c++17
-CXXFLAGS += -O1 -g -fsanitize=address -fno-omit-frame-pointer
-LDFLAGS += -g -fsanitize=address
+ifdef ASAN
+	CXXFLAGS += -fsanitize=address
+	LDFLAGS += -fsanitize=address
+endif
 
 all: dfu
 
