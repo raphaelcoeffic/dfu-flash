@@ -93,16 +93,9 @@ int download(dfu::dfu_device& dfu, const uint8_t* data, size_t data_len,
   if (!connection) {
     fprintf(stderr, "Could not claim DFU device\n");
   } else {
-    dfu::dfu_status st;
-    ret = connection->get_status(st);
-    if (ret == 0 && st.status == DFU_STATE_DFU_ERROR) {
-      if (connection->clear_status() == LIBUSB_SUCCESS) {
-        ret = connection->get_status(st);
-      }
-    }
-
-    if (ret == 0 && st.status != 0) {
-      fprintf(stderr, "Error while querying device state: %d\n", st.status);
+    ret = connection->reset_state();
+    if (ret != 0) {
+      fprintf(stderr, "Error while resetting device state: %d\n", ret);
       return -1;
     }
   }
@@ -188,17 +181,9 @@ int upload(dfu::dfu_device& dfu, const char* filename)
   if (!connection) {
     fprintf(stderr, "Could not claim DFU device\n");
   } else {
-    dfu::dfu_status st;
-    ret = connection->get_status(st);
-    if (ret == 0 && st.state != DFU_STATE_DFU_IDLE) {
-      ret = connection->abort();
-      if (ret == 0) {
-        ret = connection->get_status(st);
-      }
-    }
-
-    if (ret == 0 && st.status != 0) {
-      fprintf(stderr, "Error while querying device state: %d\n", st.status);
+    ret = connection->reset_state();
+    if (ret != 0) {
+      fprintf(stderr, "Error while resetting device state: %d\n", ret);
       return -1;
     }
   }

@@ -136,6 +136,8 @@ class dfu_connection
   }
   ~dfu_connection();
 
+  int reset_state();
+
   int get_status(dfu_status& st);
   int clear_status();
   int abort();

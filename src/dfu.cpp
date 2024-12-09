@@ -298,6 +298,36 @@ int dfu_connection::dfu_upload(int transaction, unsigned char* data,
   return err;
 }
 
+int dfu_connection::reset_state()
+{
+  dfu::dfu_status st;
+
+  int ret = get_status(st);
+  if (ret < 0) return ret;
+
+  // clear errors
+  if (st.status == DFU_STATE_DFU_ERROR) {
+    ret = clear_status();
+    if (ret < 0) return ret;
+
+    ret = get_status(st);
+    if (ret < 0) return ret;
+  }
+
+  // reset state
+  if (st.state != DFU_STATE_DFU_IDLE) {
+    ret = abort();
+    if (ret < 0) return ret;
+
+    ret = get_status(st);
+    if (ret < 0) return ret;
+  }
+
+  if (st.status != 0) return st.status;
+
+  return ret;
+}
+
 int dfu_connection::get_status(dfu_status& st)
 {
   uint8_t data[DFU_STATE_LEN];
